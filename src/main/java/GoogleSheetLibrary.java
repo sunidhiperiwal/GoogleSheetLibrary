@@ -4,6 +4,7 @@ import com.google.api.client.extensions.jetty.auth.oauth2.LocalServerReceiver;
 import com.google.api.client.googleapis.auth.oauth2.GoogleAuthorizationCodeFlow;
 import com.google.api.client.googleapis.auth.oauth2.GoogleClientSecrets;
 import com.google.api.client.googleapis.javanet.GoogleNetHttpTransport;
+import com.google.api.client.http.HttpRequestInitializer;
 import com.google.api.client.http.javanet.NetHttpTransport;
 import com.google.api.client.json.JsonFactory;
 import com.google.api.client.json.jackson2.JacksonFactory;
@@ -12,10 +13,12 @@ import com.google.api.services.sheets.v4.Sheets;
 import com.google.api.services.sheets.v4.SheetsScopes;
 import com.google.api.services.sheets.v4.model.*;
 
+import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.security.GeneralSecurityException;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 
@@ -38,7 +41,7 @@ public class GoogleSheetLibrary implements GoogleSheetsService {
 
         GoogleAuthorizationCodeFlow flow = new GoogleAuthorizationCodeFlow.Builder(
                 HTTP_TRANSPORT, JSON_FACTORY, clientSecrets, Collections.singletonList(SheetsScopes.SPREADSHEETS))
-                .setDataStoreFactory(new FileDataStoreFactory(new java.io.File(tokensDirectoryPath)))
+                .setDataStoreFactory(new FileDataStoreFactory(new File(tokensDirectoryPath)))
                 .setAccessType("offline")
                 .build();
         LocalServerReceiver receiver = new LocalServerReceiver.Builder().setPort(8888).build();
@@ -46,18 +49,18 @@ public class GoogleSheetLibrary implements GoogleSheetsService {
     }
 
     @Override
-    public void createSheet(String spreadsheetId, String sheetName) throws IOException {
+    public void createSheet(String spreadsheetID,String sheetName) throws IOException {
         BatchUpdateSpreadsheetRequest request = new BatchUpdateSpreadsheetRequest().setRequests(
                 Collections.singletonList(new Request().setAddSheet(new AddSheetRequest().setProperties(
                         new SheetProperties().setTitle(sheetName)))));
-        service.spreadsheets().batchUpdate(spreadsheetId, request).execute();
+        service.spreadsheets().batchUpdate(spreadsheetID, request).execute();
+
     }
 
     @Override
-    public void updateSheet(String spreadsheetId, String sheetName, String value, String cell) throws IOException {
-        List<List<Object>> values = Collections.singletonList(Collections.singletonList(value));
-        ValueRange body = new ValueRange().setValues(values);
-        service.spreadsheets().values().update(spreadsheetId, sheetName + "!" + cell, body)
+    public void updateSheet(String spreadsheetId, String sheetName,  List<Object> value, String cell,String cell2) throws IOException {
+        ValueRange body = new ValueRange().setValues(Collections.singletonList(value));
+        service.spreadsheets().values().update(spreadsheetId, sheetName + "!" + cell+":"+cell2, body)
                 .setValueInputOption("RAW")
                 .execute();
     }
@@ -92,13 +95,13 @@ public class GoogleSheetLibrary implements GoogleSheetsService {
         return response.getSpreadsheetId();
     }
 
-    @Override
-    public void insertRows(String spreadsheetId, String range, List<List<Object>> values) throws IOException {
-        ValueRange body = new ValueRange().setValues(values);
-        service.spreadsheets().values().update(spreadsheetId, range, body)
-                .setValueInputOption("RAW")
-                .execute();
-    }
+//    @Override
+//    public void insertRows(String spreadsheetId, String range, List<List<Object>> values) throws IOException {
+//        ValueRange body = new ValueRange().setValues(values);
+//        service.spreadsheets().values().update(spreadsheetId, range, body)
+//                .setValueInputOption("RAW")
+//                .execute();
+//    }
 
     @Override
     public void clearRange(String spreadsheetId, String range) throws IOException {
@@ -107,12 +110,11 @@ public class GoogleSheetLibrary implements GoogleSheetsService {
     }
 
     @Override
-    public void findAndReplace(String spreadsheetId, String sheetName, String find, String replace) throws IOException {
+    public void findAndReplace(String spreadsheetId, int sheetId, String find, String replace) throws IOException {
         FindReplaceRequest findReplaceRequest = new FindReplaceRequest()
                 .setFind(find)
                 .setReplacement(replace)
-                .setAllSheets(false)
-                .setSheetId(getSheetId(spreadsheetId, sheetName));
+                .setSheetId(sheetId);
 
         BatchUpdateSpreadsheetRequest batchUpdateRequest = new BatchUpdateSpreadsheetRequest()
                 .setRequests(Collections.singletonList(new Request().setFindReplace(findReplaceRequest)));
@@ -120,11 +122,24 @@ public class GoogleSheetLibrary implements GoogleSheetsService {
     }
 
     @Override
-    public void batchUpdateValues(String spreadsheetId, List<ValueRange> data) throws IOException {
-        BatchUpdateValuesRequest batchUpdateValuesRequest = new BatchUpdateValuesRequest()
+    public void batchUpdateValues(String spreadsheetId, List<List<Object>> data,String sheetName) throws IOException {
+        ClearValuesRequest clearValuesRequest = new ClearValuesRequest();
+        service.spreadsheets().values().clear(spreadsheetId, sheetName, clearValuesRequest).execute();
+
+        // Define the range to update (starting from A1)
+        String updateRange = sheetName + "!A1";
+
+        // Create the ValueRange object
+        ValueRange valueRange = new ValueRange()
+                .setRange(updateRange)
+                .setValues(data);
+
+        // Create a BatchUpdateValuesRequest
+        BatchUpdateValuesRequest batchUpdateRequest = new BatchUpdateValuesRequest()
                 .setValueInputOption("RAW")
-                .setData(data);
-        service.spreadsheets().values().batchUpdate(spreadsheetId, batchUpdateValuesRequest).execute();
+                .setData(Collections.singletonList(valueRange));
+
+        service.spreadsheets().values().batchUpdate(spreadsheetId, batchUpdateRequest).execute();
     }
 
     @Override
@@ -140,5 +155,42 @@ public class GoogleSheetLibrary implements GoogleSheetsService {
             }
         }
         throw new IOException("Sheet not found: " + sheetName);
+    }
+    public void insertRow(String spreadsheetId, int sheetId, int startIndex, boolean insertAfter) throws IOException {
+        int index = insertAfter ? startIndex + 1 : startIndex;
+        DimensionRange dimensionRange = new DimensionRange()
+                .setSheetId(sheetId)
+                .setDimension("ROWS")
+                .setStartIndex(index)
+                .setEndIndex(index + 1);
+
+        InsertDimensionRequest insertDimensionRequest = new InsertDimensionRequest()
+                .setRange(dimensionRange)
+                .setInheritFromBefore(index != 0);
+
+        Request request = new Request().setInsertDimension(insertDimensionRequest);
+        BatchUpdateSpreadsheetRequest body = new BatchUpdateSpreadsheetRequest()
+                .setRequests(Arrays.asList(request));
+
+        service.spreadsheets().batchUpdate(spreadsheetId, body).execute();
+    }
+
+    public void insertColumn(String spreadsheetId, int sheetId, int startIndex, boolean insertAfter) throws IOException {
+        int index = insertAfter ? startIndex + 1 : startIndex;
+        DimensionRange dimensionRange = new DimensionRange()
+                .setSheetId(sheetId)
+                .setDimension("COLUMNS")
+                .setStartIndex(index)
+                .setEndIndex(index + 1);
+
+        InsertDimensionRequest insertDimensionRequest = new InsertDimensionRequest()
+                .setRange(dimensionRange)
+                .setInheritFromBefore(index != 0);
+
+        Request request = new Request().setInsertDimension(insertDimensionRequest);
+        BatchUpdateSpreadsheetRequest body = new BatchUpdateSpreadsheetRequest()
+                .setRequests(Arrays.asList(request));
+
+        service.spreadsheets().batchUpdate(spreadsheetId, body).execute();
     }
 }
